@@ -8,18 +8,30 @@ from bertopic import BERTopic
 from bertopic.representation import KeyBERTInspired
 from bertopic.vectorizers import ClassTfidfTransformer
 # %%
+import pandas as pd
+df = pd.read_parquet('data/df_joined_2024-04-01 00:00:00.paquet')
+# %%
 
+# %%
 # Step 1 - Extract embeddings
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+# %%
+from sklearn.metrics.pairwise import cosine_similarity
+# %%
+
 # %%
 # Step 2 - Reduce dimensionality
 umap_model = UMAP(n_neighbors=15, n_components=5, min_dist=0.0, metric='cosine')
+
 # %%
 # Step 3 - Cluster reduced embeddings
-hdbscan_model = HDBSCAN(min_cluster_size=15, metric='euclidean', cluster_selection_method='eom', prediction_data=True)
+hdbscan_model = HDBSCAN(min_cluster_size=10, metric='euclidean', cluster_selection_method='eom', prediction_data=True)
 # %%
 # Step 4 - Tokenize topics
-vectorizer_model = CountVectorizer()
+vectorizer_model = CountVectorizer(
+
+)
 # %%
 # Step 5 - Create topic representation
 ctfidf_model = ClassTfidfTransformer()
@@ -39,8 +51,6 @@ topic_model = BERTopic(
   representation_model=representation_model # Step 6 - (Optional) Fine-tune topic represenations
 )
 # %% Load data
-import pandas as pd
-df = pd.read_parquet('data/df_joined_2024-04-01 00:00:00.paquet')
 # %%
 topic_model.fit(df['in__title'])
 # %%
