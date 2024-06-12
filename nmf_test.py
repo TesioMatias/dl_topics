@@ -25,27 +25,27 @@ all_tokens = list(entities.union(keywords))
 # %%
 all_tokens
 # %%
-len(all_tokens)
+print(len(all_tokens))
 def tokenizer(sentence):
     return sentence.split(' ')
 # %%
 tokenizer('Hola que tal')
 # %%
 tf_vectorizer = TfidfVectorizer(
-    # tokenizer=tokenizer,
-    # max_df=0.1,
-    # min_df=10,
+    tokenizer=tokenizer,
+    max_df=0.1,
+    min_df=10,
     ngram_range=(1, 3),
     stop_words=SPANISH_STOPWORDS,
-    lowercase=False,
+    lowercase=True,
     vocabulary=all_tokens,
-    # max_features=100_000
+    max_features=100_000
 )
 tf = tf_vectorizer.fit_transform(list(df['title_and_text']))
 # %%
 tf
 # %%
-n_topics = 10
+n_topics = 20
 nmf = NMF(n_topics)
 # %%
 doc_topics = nmf.fit_transform(tf)
@@ -62,4 +62,6 @@ plot_top_words(
     10,
     'NMF Plot'
 )
+# %%
+len(df)
 # %%
