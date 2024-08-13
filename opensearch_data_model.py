@@ -72,5 +72,6 @@ class Topic(Document):
             }
 
     def save(self, ** kwargs):
+        # preguntar si esto noo hay que hacer el save en openSearch
         self.meta.id = f'{self.index}' + self.name.replace(', ', '-').replace(' ', '_')
         return super(Topic, self).save(** kwargs)

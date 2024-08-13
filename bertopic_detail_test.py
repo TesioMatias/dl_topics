@@ -11,7 +11,7 @@ from bertopic.vectorizers import ClassTfidfTransformer
 import pandas as pd
 df = pd.read_parquet('data/df_joined_2024-04-01 00:00:00.paquet')
 # %%
-
+df.head()
 # %%
 # Step 1 - Extract embeddings
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -63,4 +63,6 @@ topic_model.visualize_hierarchy()
 topic_model.visualize_documents(list(df['in__title']))
 # %%
 topic_model.visualize_term_rank()
+# %%
+len(topic_model.get_topics())
 # %%

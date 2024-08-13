@@ -52,8 +52,8 @@ lda.components_[:, 0]
 # %%
 plot_top_words(
     lda,
-    np.array(tf_vectorizer.get_feature_names()),
-    15,
+    np.array(tf_vectorizer.get_feature_names_out()),
+    10,
     'LDA Plot'
 )
 # %%
@@ -64,7 +64,8 @@ lda = LatentDirichletAllocation(
     max_iter=5, 
     learning_method='online', 
     learning_offset=50.,
-    random_state=0)
+    random_state=0
+    )
 
 model = GridSearchCV(lda, param_grid=search_params)
 
