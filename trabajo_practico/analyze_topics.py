@@ -1,22 +1,171 @@
 # %%
-# Donwloads
-# !pip install nltk
-# nltk.download("stopwords")
-# nltk.download("wordnet")
-# nltk.download("omw-1.4")
-# !pip install gensim
-# !pip install scipy==1.12
-# !pip install datasets
-# !export PYTHONPATH=.
-
-# %%
+# IMPORTS
 from network.repository import Repository
-from topic_model.TopicModelManager import fit_transform
 from utils.eda_utils import load_info, eda, prepare_info_for_model
-from sklearn.metrics.pairwise import cosine_similarity
+from pysentimiento import create_analyzer
+from data.DocumentDAO import News, data_index
+from data.TopicDAO import index as topic_index, TopicKeyword, Topic
+from utils.utils import SPANISH_STOPWORDS
+
+from dateutil.parser import parse
+from datetime import datetime
+import spacy
+
+from bertopic import BERTopic
+from sentence_transformers import SentenceTransformer
+from umap import UMAP
+from hdbscan import HDBSCAN
+from sklearn.feature_extraction.text import CountVectorizer
+from bertopic.vectorizers import ClassTfidfTransformer
+
+
+# %% 
+# SE DEFINEN LAS FUNCIONES QUE SERÁN DE UTILIDAD
+#/-------------------
+def create_repository(data_idx, topic_idx):
+    repository = Repository()
+    repository.create_index(index=data_idx)
+    repository.create_index(index=topic_idx)
+    return repository
+
+#/-------------------
+def load_dataset(dataset):
+    df = load_info(dataset = dataset)
+    eda(df = df)
+    data, kw, entities = prepare_info_for_model(
+        df = df,
+        first_n_elements = number_of_news_to_analyze
+    )
+    print(data[:10])
+    print(kw[:10])
+    print(entities[:10])
+    return df, data, kw, entities
+
+#/-------------------
+def geneate_topics_for_the_day(data, all_tokens):
+    tokenizer = CountVectorizer(
+        ngram_range=(1, 3),
+        stop_words=SPANISH_STOPWORDS,
+        lowercase=True,
+        vocabulary=all_tokens,
+    )
+    tokenizer.fit(data)
+
+    model = BERTopic(
+        language='spanish',
+        calculate_probabilities=False,
+        embedding_model=SentenceTransformer("all-MiniLM-L6-v2"),
+        umap_model=UMAP(n_neighbors=10, n_components=5, min_dist=0.0, metric='cosine'),
+        hdbscan_model=HDBSCAN(min_cluster_size=7, metric='euclidean', cluster_selection_method='eom', prediction_data=True),
+        vectorizer_model=tokenizer,
+        ctfidf_model=ClassTfidfTransformer(),
+        verbose=True,
+        min_topic_size=7
+    )
+
+    topics, probs = model.fit_transform(data)
+
+    print(len(topics))
+    print(len(probs))
+    print(len(data))
+
+    print(len(model.get_topics()))
+    print(model.get_topics())
+    print(topics)
+
+    print(probs)
+
+    return topics, probs, model
+
+#/-------------------
+def save_day_batch_documents_to_db(repository, df, model, sentiment_analyzer, date):
+    for idx in range(0, number_of_news_to_analyze):
+        embedding = list(model.embedding_model.embed(df['text'][idx]))
+        sentiment_analysis = sentiment_analyzer.predict(
+            df['text'][idx]
+        ).output
+
+        news = News(
+            id = embedding,
+            created_at = date,
+            text = str(df['text'][idx]),
+            entities = str(df['entities'][idx]),
+            sentiment_analysis = sentiment_analysis
+        )
+
+        print(idx)
+        news.save(using=repository.get_client())
+
+#/-------------------
+def get_topic_name(keywords):
+    return ', '.join([k for k, s in keywords[:4]])
+
+def save_model_to_db(repository, model, date):
+
+    # TODO: guardar/actualizar los nuevos topicos, para hay que chequear si existe y hacer un update en el date
+
+
+    for topic in model.get_topics().keys():
+        #agregar un if para chequear si el topico ya existe, si ya existe, entonces solo update en el date_to
+        if topic > -1:
+            keywords = model.topic_representations_[topic]
+            topic_keywords = [TopicKeyword(name=k, score=s) for k, s in keywords]
+
+            topic_doc = Topic(
+                vector = list(model.topic_embeddings_[topic + 1]),
+                similarity_threshold = 0.7,
+                created_at = datetime.now(),
+                to_date = parse(date),
+                from_date = parse(date),
+                index = topic,
+                keywords = topic_keywords,
+                name = get_topic_name(keywords),
+            )
+
+            print(topic)
+            print(topic_doc.save(using=repository.get_client()))
+
+#/-------------------
+def analyze_single_piece_of_news(model, dataset=1, document_number=244):
+    df = load_info(dataset = ds_list[dataset])
+    single_piece_of_news = df['text'][document_number]
+    topic, probs = model.transform(single_piece_of_news)
+    document = nlp(single_piece_of_news)
+    return single_piece_of_news, topic, probs, document.ents
+
+#/-------------------
+def search_documents(client, date_from="2024-07-09", date_to="2024-07-10"):
+    query = {
+        "query": {
+            "range": {
+                "created_at": {
+                    "gte": date_from,
+                    "lte": date_to
+                }
+            }
+        }
+    }
+
+    response = client.search(index=data_index, body=query, size=3000)  # size es opcional, ajusta según lo necesario
+    documents = response['hits']['hits']
+
+    docs = []
+    timestamps = []
+    for doc in documents:
+        docs.append(doc['_source']['text'])
+        timestamps.append(doc['_source']['created_at'][0:10])
+
+    print(len(docs))
+    print(len(timestamps))
+    print(docs[3])
+    print(timestamps[0])
+
+    return docs, timestamps
+#/-------------------
 
 # %%
-# 1 - Define Datasets
+# SE DEFINEN DATASETS, REPOSITORIO, SENTIMENT ANALYZER, DAOs y NER
+number_of_news_to_analyze=1500
 
 ds_list = [
     "jganzabalseenka/news_2024-07-09_24hs",
@@ -26,185 +175,94 @@ ds_list = [
     "jganzabalseenka/news_2024-07-13_24hs"
 ]
 
-# %%
-# 2 - Create repository and index
-repository = Repository()
+sentiment_analyzer = create_analyzer(task="sentiment", lang="es")
+repository = create_repository(data_index, topic_index)
+Topic.init(using=repository.get_client())
+News.init(using=repository.get_client())
+nlp = spacy.load('es_core_news_md')
 
-index = 'topics-index'
-resp = repository.create_index(index=index)
-print('\nCreating index:')
-print(resp)
 
 # %%
-# 3 - Load and EDA over the dataset
-day_zero_df = load_info(dataset = ds_list[0])
+# SETUP INICIAL DIA ZERO, PRIMER BATCH DE NOTICIAS Y GUARDADO DE DOCS Y TOPICS
+day_zero = "2024-07-09" 
 
-eda(df = day_zero_df)
+day_zero_df, data, kw, entities = load_dataset(dataset = ds_list[0])
+topics, probs, model = geneate_topics_for_the_day(
+    data=data, 
+    all_tokens=list(set(kw + entities))
+)
+save_day_batch_documents_to_db(repository, day_zero_df, model, sentiment_analyzer, day_zero)
+save_model_to_db(repository, model, day_zero)
 
-data, kw, entities = prepare_info_for_model(
-    df = day_zero_df,
-    first_n_elements = 2000
+
+
+# %%
+# CASO 1: LLEGA UNA SOLA NOTICIA Y SE ANALIZA
+# PARA ESTE CASO UTILIZAREMOS CUALQUIER DOCUMENTO DE CUALQUIER DATASET
+
+dataset_number = 1 # change the dataset you want to check (form:0 - to 4)
+document_number = 244 # change the doc inside the dataset selected (from: 0 - to: datasetLength)
+
+single_piece_of_news, topic, probs, ents = analyze_single_piece_of_news(
+    dataset=dataset_number, 
+    document_number=document_number,
+    model = model
 )
 
-# %% 
-# 4 - Train the topic model with the first day dataset
-topics, probs, model = fit_transform(
-    data=data,
-    kw=kw,
-    entities=entities
+print(single_piece_of_news)
+print("Topic nº: " + str(topic[0]))
+print("Prob: " + str(probs))
+print("Topic representation - keywords: " + str(model.topic_representations_[topic[0]]))
+print("Sentiment analysis: " + sentiment_analyzer.predict(single_piece_of_news).output)
+print("Entities: " + str(ents))
+
+
+# %%
+# CASO 2: SE ANALIZA UN DIA ENTERO NUEVO DE NOTICIAS (DIA 0 y DIA 1)
+day_one = "2024-07-10"
+
+day_one_df, data_d1, kw_d1, entities_d1= load_dataset(dataset = ds_list[1])
+topics_d1, probs_d1, model_d1 = geneate_topics_for_the_day(
+    data=data_d1, 
+    all_tokens=list(set(kw_d1 + entities_d1))
 )
+model.merge_models([model_d1], min_similarity = .9)
+save_day_batch_documents_to_db(repository, day_one_df, model, sentiment_analyzer, day_one)
+save_model_to_db(repository, model, day_one)
 
-print(len(topics))
-print(len(probs))
-print(topics)
-print(probs)
-print(model)
+
 
 # %%
-# 5 - Guardado de topicos en una db
-embedings = model.embedding_model.embed(data)
+# CASO 3: SE ANALIZA UN DIA ENTERO NUEVO DE NOTICIAS (DIA 0, DIA 1 y DIA 2)
+day_two = "2024-07-11"
 
-sim_matrix = cosine_similarity(
-    model.topic_embeddings_,
-    embedings
+# %%
+# CASO 4: SE ANALIZA UN DIA ENTERO NUEVO DE NOTICIAS (DIA 0, DIA 1, DIA 2 y DIA 3)
+day_three = "2024-07-12"
+
+
+# %%
+# CASO 5: SE ANALIZA UN DIA ENTERO NUEVO DE NOTICIAS (DIA 0, DIA 1, DIA 2, DIA 3 y DIA 4)
+day_four = "2024-07-13"
+
+
+
+
+
+# %%
+# CHECK TOPICS OVER TIME
+
+# Select date from and two here
+from_date = day_zero
+to_date = day_one
+
+docs, timestamps = search_documents(repository.get_client(), from_date, to_date)
+
+model.fit(docs)
+
+topics_over_time = model.topics_over_time(
+    docs=docs, 
+    timestamps=timestamps
 )
+model.visualize_topics_over_time(topics_over_time)
 
-repository.save_model(
-    df=day_zero_df, 
-    date_from=ds_list[0][21:-5], 
-    date_to=ds_list[0][21:-5], 
-    index=index,
-    sim_matrix=sim_matrix,
-    model= model
-)
-
-# %%
-# 6 - Llega un nuevo documento solo
-model.topic_representations_
-# %%
-# 7 - Llega el batch del dia 1
-
-# %%
-# 8 - Llega el batch del dia 2
-
-# %%
-# 9 - Llega el batch del dia 3
-
-# %%
-# 10 - Llega el batch del dia 4
-
-
-
-
-
-# %%
-q = 'miller'
-query = {
-    'size': 5,
-    'query': {
-        'multi_match': {
-            'query': q,
-            'fields': ['title^2', 'director']
-        }
-    }
-}
- 
-response = repository.search(query=query, index=index)
-print('\nSearch results:')
-print(response)
-
-
-
-
-
-
-
-# %%
-
-topic_model_helper.generate_topic_for_an_article("articulo de a uno") -> ids de topicos a los que el texto pertenece
-
-topic_model_helper.generate_topic_by_batch(day_x_df)
-
-topic_model_helper.topic_representation_by_quantity() -> necesito tener cuantos documentos tiene cada topico
-
-topic_model_helper.topic_representation_over_time() -> necesito entender de que topicos se habló cada dia
-
-#Sentiment analisis
-sentiment_analisis = SentimentAnalisis()
-sentiment_analisis.analize(df): list<G, B, N> por cada doc en el df
-
-
-#ejecucion normal
-
-topic_model_helper = TopicModelHelper()
-sentiment_analisis = SentimentAnalisis()
-topic_model_repository = TopicModelRepository()
-
-topics = topic_model_helper.train(
-    eda_util.prepare_info_for_model(df)
-)
-
-topic_model_repository.upsert(DaoUtils.topics())
-
-
-
-
-
-update_df_with_topics(df_general, topics)
-
-update_df_with_sentiment_analisis(df_general, new_docs) {
-    sentiment_analisis.analize(df): list<G, B, N> por cada doc en el df
-}
-
-
-topic_model_helper.generate_topic_for_an_article("articulo de a uno")
-
-update_df_with_topics(doc, topic)
-
-update_df_with_sentiment_analisis(df_general, doc) {
-    sentiment_analisis.analize(df): list<G, B, N> por cada doc en el df
-}
-
-topic_model_helper.generate_topic_by_batch(day_x_df)
-
-update_df_with_topics(df_general, topics)
-
-update_df_with_sentiment_analisis(df_general, new_docs) {
-    sentiment_analisis.analize(df): list<G, B, N> por cada doc en el df
-}
-
-
-
-topic_model_helper.topic_representation_by_quantity()
-
-topic_model_helper.topic_representation_over_time()
-
-
-
-
-
-
-
-
-# %%
-config = Config()
-db_client = db(config.host, config.port, credentials)
-
-response = db_client.create_index()
-print('\nCreating index:')
-print(response)
- 
-q = 'miller'
-query = {
-    'size': 5,
-    'query': {
-        'multi_match': {
-            'query': q,
-            'fields': ['title^2', 'director']
-        }
-    }
-}
- 
-response = db_client.search(query)
-print('\nSearch results:')
-print(response)

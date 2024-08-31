@@ -34,19 +34,15 @@ class Database():
         
         return response
     
-    def search(self, query, index):
+    def search(self, query, index, size):
         respose = self.client.search(
             body=query,
-            index=index
+            index=index,
+            size= size
         )
 
         return respose
     
-    def save_topic(self, doc, index):
-        print(index)
-        print(doc)
-
-    #Just for testing
     def get_client(self):
         return self.client
     

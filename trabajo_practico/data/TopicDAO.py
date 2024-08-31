@@ -6,18 +6,11 @@ knn_params = {
     "space_type": "cosinesimil",
     "engine": "nmslib"
 }
+index = 'topics-index'
 
 class TopicKeyword(InnerDoc):
     name = Keyword()
     score = Float()
-
-class SimilarTopics(Document):
-    topic_id = Keyword()
-    similar_to = Keyword()
-    similarity = Float()
-    common_keywwords = Keyword()
-    keywords_not_in_similar = Keyword()
-    keywords_not_in_topic = Keyword()
 
 class KNNVector(Field):
     name = "knn_vector"
@@ -33,4 +26,9 @@ class Topic(Document):
     index = Integer()
     keywords = Object(TopicKeyword)
     name = Text()
-    best_doc = Text()
+
+    class Index:
+        name = index
+
+    def save(self, ** kwargs):
+        return super(Topic, self).save(** kwargs)
