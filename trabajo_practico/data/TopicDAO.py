@@ -21,8 +21,6 @@ class Topic(Document):
     vector = KNNVector(TOPIC_DIMENSIONS, knn_params)
     similarity_threshold = Float()
     created_at = Date()
-    to_date = Date()
-    from_date = Date()
     index = Integer()
     keywords = Object(TopicKeyword)
     name = Text()

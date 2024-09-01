@@ -4,7 +4,7 @@ from network.repository import Repository
 from utils.eda_utils import load_info, eda, prepare_info_for_model
 from pysentimiento import create_analyzer
 from data.DocumentDAO import News, data_index
-from data.TopicDAO import index as topic_index, TopicKeyword, Topic
+from data.TopicDAO import TopicKeyword, Topic
 from utils.utils import SPANISH_STOPWORDS
 
 from dateutil.parser import parse
@@ -18,16 +18,9 @@ from hdbscan import HDBSCAN
 from sklearn.feature_extraction.text import CountVectorizer
 from bertopic.vectorizers import ClassTfidfTransformer
 
-
+#//////////////////////////////////////////////////////////////////////////////////////////
 # %% 
 # SE DEFINEN LAS FUNCIONES QUE SERÁN DE UTILIDAD
-#/-------------------
-def create_repository(data_idx, topic_idx):
-    repository = Repository()
-    repository.create_index(index=data_idx)
-    repository.create_index(index=topic_idx)
-    return repository
-
 #/-------------------
 def load_dataset(dataset):
     df = load_info(dataset = dataset)
@@ -36,9 +29,15 @@ def load_dataset(dataset):
         df = df,
         first_n_elements = number_of_news_to_analyze
     )
-    print(data[:10])
+
+    print("\nExploration After processing the dataframe")
+    print("documento 1")
+    print(data[0])
+    print("primeras 10 kws")
     print(kw[:10])
+    print("primeras 10 entidades")
     print(entities[:10])
+
     return df, data, kw, entities
 
 #/-------------------
@@ -54,13 +53,13 @@ def geneate_topics_for_the_day(data, all_tokens):
     model = BERTopic(
         language='spanish',
         calculate_probabilities=False,
-        embedding_model=SentenceTransformer("all-MiniLM-L6-v2"),
+        embedding_model=SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2"),
         umap_model=UMAP(n_neighbors=10, n_components=5, min_dist=0.0, metric='cosine'),
         hdbscan_model=HDBSCAN(min_cluster_size=7, metric='euclidean', cluster_selection_method='eom', prediction_data=True),
         vectorizer_model=tokenizer,
         ctfidf_model=ClassTfidfTransformer(),
         verbose=True,
-        min_topic_size=7
+        min_topic_size=10
     )
 
     topics, probs = model.fit_transform(data)
@@ -79,6 +78,7 @@ def geneate_topics_for_the_day(data, all_tokens):
 
 #/-------------------
 def save_day_batch_documents_to_db(repository, df, model, sentiment_analyzer, date):
+    print("starting to save docs")
     for idx in range(0, number_of_news_to_analyze):
         embedding = list(model.embedding_model.embed(df['text'][idx]))
         sentiment_analysis = sentiment_analyzer.predict(
@@ -92,38 +92,40 @@ def save_day_batch_documents_to_db(repository, df, model, sentiment_analyzer, da
             entities = str(df['entities'][idx]),
             sentiment_analysis = sentiment_analysis
         )
-
-        print(idx)
         news.save(using=repository.get_client())
+        print(idx)
+
+    print("end saving docs")
 
 #/-------------------
+
 def get_topic_name(keywords):
     return ', '.join([k for k, s in keywords[:4]])
 
-def save_model_to_db(repository, model, date):
-
-    # TODO: guardar/actualizar los nuevos topicos, para hay que chequear si existe y hacer un update en el date
-
-
+def save_model_to_db(repository, model):
+    print("starting to save topics")
     for topic in model.get_topics().keys():
-        #agregar un if para chequear si el topico ya existe, si ya existe, entonces solo update en el date_to
         if topic > -1:
-            keywords = model.topic_representations_[topic]
-            topic_keywords = [TopicKeyword(name=k, score=s) for k, s in keywords]
+            s = Topic.search().query("match", index=topic)
+            is_existing_topic = s.execute().to_dict()['hits']['total']['value']
 
-            topic_doc = Topic(
-                vector = list(model.topic_embeddings_[topic + 1]),
-                similarity_threshold = 0.7,
-                created_at = datetime.now(),
-                to_date = parse(date),
-                from_date = parse(date),
-                index = topic,
-                keywords = topic_keywords,
-                name = get_topic_name(keywords),
-            )
+            if is_existing_topic == 0:
+                keywords = model.topic_representations_[topic]
+                topic_keywords = [TopicKeyword(name=k, score=s) for k, s in keywords]
 
-            print(topic)
-            print(topic_doc.save(using=repository.get_client()))
+                topic_doc = Topic(
+                    vector = list(model.topic_embeddings_[topic + 1]),
+                    similarity_threshold = 0.7,
+                    created_at = datetime.now(),
+                    index = topic,
+                    keywords = topic_keywords,
+                    name = get_topic_name(keywords),
+                )
+
+                topic_doc.save(using=repository.get_client())
+                print(topic)
+
+    print("end saving topics")
 
 #/-------------------
 def analyze_single_piece_of_news(model, dataset=1, document_number=244):
@@ -134,7 +136,8 @@ def analyze_single_piece_of_news(model, dataset=1, document_number=244):
     return single_piece_of_news, topic, probs, document.ents
 
 #/-------------------
-def search_documents(client, date_from="2024-07-09", date_to="2024-07-10"):
+def search_documents(client, date_from="2024-07-09", date_to="2024-07-10", qty = 3000):
+    '''
     query = {
         "query": {
             "range": {
@@ -148,7 +151,24 @@ def search_documents(client, date_from="2024-07-09", date_to="2024-07-10"):
 
     response = client.search(index=data_index, body=query, size=3000)  # size es opcional, ajusta según lo necesario
     documents = response['hits']['hits']
+    
+    '''
+    
+    query = {
+        "size":qty,
+        "query": {
+            "range": {
+                "created_at": {
+                    "gte": date_from,
+                    "lte": date_to
+                }
+            }
+        }
+    }
 
+    s = News.search().from_dict(query)
+    documents = s.execute().to_dict()['hits']['hits']
+    
     docs = []
     timestamps = []
     for doc in documents:
@@ -161,8 +181,8 @@ def search_documents(client, date_from="2024-07-09", date_to="2024-07-10"):
     print(timestamps[0])
 
     return docs, timestamps
-#/-------------------
 
+#//////////////////////////////////////////////////////////////////////////////////////////
 # %%
 # SE DEFINEN DATASETS, REPOSITORIO, SENTIMENT ANALYZER, DAOs y NER
 number_of_news_to_analyze=1500
@@ -176,12 +196,13 @@ ds_list = [
 ]
 
 sentiment_analyzer = create_analyzer(task="sentiment", lang="es")
-repository = create_repository(data_index, topic_index)
+repository = Repository()
 Topic.init(using=repository.get_client())
 News.init(using=repository.get_client())
 nlp = spacy.load('es_core_news_md')
 
 
+#//////////////////////////////////////////////////////////////////////////////////////////
 # %%
 # SETUP INICIAL DIA ZERO, PRIMER BATCH DE NOTICIAS Y GUARDADO DE DOCS Y TOPICS
 day_zero = "2024-07-09" 
@@ -192,10 +213,10 @@ topics, probs, model = geneate_topics_for_the_day(
     all_tokens=list(set(kw + entities))
 )
 save_day_batch_documents_to_db(repository, day_zero_df, model, sentiment_analyzer, day_zero)
-save_model_to_db(repository, model, day_zero)
+save_model_to_db(repository, model)
 
 
-
+#//////////////////////////////////////////////////////////////////////////////////////////
 # %%
 # CASO 1: LLEGA UNA SOLA NOTICIA Y SE ANALIZA
 # PARA ESTE CASO UTILIZAREMOS CUALQUIER DOCUMENTO DE CUALQUIER DATASET
@@ -217,6 +238,7 @@ print("Sentiment analysis: " + sentiment_analyzer.predict(single_piece_of_news).
 print("Entities: " + str(ents))
 
 
+#//////////////////////////////////////////////////////////////////////////////////////////
 # %%
 # CASO 2: SE ANALIZA UN DIA ENTERO NUEVO DE NOTICIAS (DIA 0 y DIA 1)
 day_one = "2024-07-10"
@@ -226,43 +248,157 @@ topics_d1, probs_d1, model_d1 = geneate_topics_for_the_day(
     data=data_d1, 
     all_tokens=list(set(kw_d1 + entities_d1))
 )
-model.merge_models([model_d1], min_similarity = .9)
-save_day_batch_documents_to_db(repository, day_one_df, model, sentiment_analyzer, day_one)
-save_model_to_db(repository, model, day_one)
+
+print("topic quantity pre merge: " + str(len(model.get_topics())))
+merged_model = BERTopic.merge_models([model, model_d1], min_similarity=0.85)
+save_day_batch_documents_to_db(repository, day_one_df, merged_model, sentiment_analyzer, day_one)
+save_model_to_db(repository, merged_model)
+
+# %%
+# EDA over merged models for day 0 and 1
+print(len(model.get_topics()))
+print(len(model_d1.get_topics()))
+print(len(merged_model.get_topics()))
+
+topic_info_1 = model.get_topic_info()
+topic_info_2 = model_d1.get_topic_info()
+merged_topic_info = merged_model.get_topic_info()
+
+print(topic_info_1.tail(5))
+print(topic_info_2.tail(5))
+print(merged_topic_info.tail(10))
+
+# %%
+elegir_nombre_de_topic_de_model_d1 = "46_cámara_diputados_senado_oposición"
+selected_abstracts = [item[0] for item in zip(data_d1, topics_d1) if item[1] == topic_info_2.loc[topic_info_2["Name"] == elegir_nombre_de_topic_de_model_d1, "Topic"].values[0]]
+print(selected_abstracts)
+print(model_d1.transform(selected_abstracts))
+print(merged_model.transform(selected_abstracts))
 
 
 
+#//////////////////////////////////////////////////////////////////////////////////////////
 # %%
 # CASO 3: SE ANALIZA UN DIA ENTERO NUEVO DE NOTICIAS (DIA 0, DIA 1 y DIA 2)
 day_two = "2024-07-11"
 
+day_two_df, data_d2, kw_d2, entities_d2= load_dataset(dataset = ds_list[2])
+topics_d2, probs_d2, model_d2 = geneate_topics_for_the_day(
+    data=data_d2, 
+    all_tokens=list(set(kw_d2 + entities_d2))
+)
+print("topic quantity pre merge: " + str(len(merged_model.get_topics())))
+merged_model = BERTopic.merge_models([merged_model, model_d2], min_similarity=0.85)
+save_day_batch_documents_to_db(repository, day_two_df, merged_model, sentiment_analyzer, day_two)
+save_model_to_db(repository, merged_model)
+
+# %%
+# EDA over merged models for day 0 and 1
+print(len(model.get_topics()))
+print(len(model_d1.get_topics()))
+print(len(model_d2.get_topics()))
+print(len(merged_model.get_topics()))
+
+topic_info_2 = model_d2.get_topic_info()
+merged_topic_info = merged_model.get_topic_info()
+
+print(topic_info_2.tail(5))
+print(merged_topic_info.tail(10))
+
+# %%
+elegir_nombre_de_topic_de_model_d2 = "49_toneladas_exportaciones_producción_maíz"
+
+selected_abstracts = [item[0] for item in zip(data_d2, topics_d2) if item[1] == topic_info_2.loc[topic_info_2["Name"] == elegir_nombre_de_topic_de_model_d2, "Topic"].values[0]]
+print(selected_abstracts)
+print(model_d2.transform(selected_abstracts))
+print(merged_model.transform(selected_abstracts))
+
+
+
+
+#//////////////////////////////////////////////////////////////////////////////////////////
 # %%
 # CASO 4: SE ANALIZA UN DIA ENTERO NUEVO DE NOTICIAS (DIA 0, DIA 1, DIA 2 y DIA 3)
 day_three = "2024-07-12"
 
+day_three_df, data_d3, kw_d3, entities_d3= load_dataset(dataset = ds_list[3])
+topics_d3, probs_d3, model_d3 = geneate_topics_for_the_day(
+    data=data_d3, 
+    all_tokens=list(set(kw_d3 + entities_d3))
+)
+print("topic quantity pre merge: " + str(len(merged_model.get_topics())))
+merged_model = BERTopic.merge_models([merged_model, model_d3], min_similarity=0.85)
+save_day_batch_documents_to_db(repository, day_three_df, merged_model, sentiment_analyzer, day_three)
+save_model_to_db(repository, merged_model)
 
 # %%
-# CASO 5: SE ANALIZA UN DIA ENTERO NUEVO DE NOTICIAS (DIA 0, DIA 1, DIA 2, DIA 3 y DIA 4)
-day_four = "2024-07-13"
+# EDA over merged models for day 0 and 1
+print(len(model.get_topics()))
+print(len(model_d1.get_topics()))
+print(len(model_d2.get_topics()))
+print(len(model_d3.get_topics()))
+print(len(merged_model.get_topics()))
+
+topic_info_2 = model_d3.get_topic_info()
+merged_topic_info = merged_model.get_topic_info()
+
+print(topic_info_2.tail(5))
+print(merged_topic_info.tail(10))
+
+# %%
+elegir_nombre_de_topic_de_model_d3 = ""
+
+selected_abstracts = [item[0] for item in zip(data_d3, topics_d3) if item[1] == topic_info_2.loc[topic_info_2["Name"] == elegir_nombre_de_topic_de_model_d3, "Topic"].values[0]]
+print(selected_abstracts)
+print(model_d3.transform(selected_abstracts))
+print(merged_model.transform(selected_abstracts))
 
 
 
-
-
+#//////////////////////////////////////////////////////////////////////////////////////////
 # %%
 # CHECK TOPICS OVER TIME
+'''
+Se va por esta solucion de re-entrenar el class tfidf y tomar el vectorizer porque el modelo que se genera despues del merge no hace un merge de estas cosas. solo de topicos.
+Para este caso se está siguiendo la solucion propuesta por el creador de la lib en este issue (que aun sigue abierto)
+
+https://github.com/MaartenGr/BERTopic/issues/1700
+
+'''
+
+import pandas as pd
 
 # Select date from and two here
 from_date = day_zero
-to_date = day_one
+to_date = day_two
 
-docs, timestamps = search_documents(repository.get_client(), from_date, to_date)
+docs, timestamps = search_documents(repository.get_client(), from_date, to_date, qty= 4500)
 
-model.fit(docs)
+documents = pd.DataFrame(
+    {
+        "Document": docs,
+        "ID": range(len(docs)),
+        "Topic": merged_model.topics_,
+        "Image": None
+    }
+)
+documents_per_topic = documents.groupby(['Topic'], as_index=False).agg({'Document': ' '.join})
 
-topics_over_time = model.topics_over_time(
+merged_model.vectorizer_model = model.vectorizer_model
+
+c_tf_idf, _ = merged_model._c_tf_idf(documents_per_topic)
+merged_model.c_tf_idf_ = c_tf_idf
+
+merged_model.transform(docs)
+
+topics_over_time = merged_model.topics_over_time(
     docs=docs, 
     timestamps=timestamps
 )
-model.visualize_topics_over_time(topics_over_time)
+merged_model.visualize_topics_over_time(topics_over_time)
 
+
+
+#//////////////////////////////////////////////////////////////////////////////////////////
+
+# %%

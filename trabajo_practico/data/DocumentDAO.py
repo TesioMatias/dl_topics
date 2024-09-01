@@ -8,7 +8,6 @@ knn_params = {
 }
 data_index = 'data-index'
 
-
 class KNNVector(Field):
     name = "knn_vector"
     def __init__(self, dimension, method, **kwargs):

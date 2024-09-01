@@ -10,3 +10,8 @@ conda activate topics
 
 pip install -r requirements
 ```
+
+# Trabajo Practico
+
+Todo el trabajo se encuentra en la carpeta trabajo_practico
+Tambien, dentro de "requirements.txt" se dejó una lista de las libs requeridas.

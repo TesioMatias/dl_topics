@@ -96,7 +96,6 @@ def __get_kws(df, first_n_elements=10000):
     key_1_set = list(set([ keyw.lower() for sublista in key_1 for keyw in sublista ]))
     key_1_clean = clean_all(key_1_set, accents=False)
     key_1_unique = [ word for word in key_1_clean if word not in SPANISH_STOPWORDS]
-    print(key_1_unique[:10])
     return key_1_unique
 
 def __get_entities(df, first_n_elements=10000):
@@ -104,7 +103,6 @@ def __get_entities(df, first_n_elements=10000):
     ent_1_set = list(set([ ent.lower() for sublista in ent_1 for ent in sublista ]))
     ent_1_clean = clean_all(ent_1_set, accents=False)
     ent_1_unique = [ word for word in ent_1_clean if word not in SPANISH_STOPWORDS]
-    print(ent_1_unique[:10])
     return ent_1_unique
 
 def load_info(dataset):
@@ -115,11 +113,12 @@ def load_info(dataset):
     return "The dataset contain nulls"
 
 def eda(df):
+    print("EDA exploration befor processing the dataframe")
     print("Kw: " +str(df.iloc[0]['keywords']))
     print("Entities: " + str(df.iloc[0]['entities_transformers']))
     print("canidad de documentos: " + str(len(df)))
     print("canidad de documentos en lista: " + str(len(df)))
-    df.head()
+    print(df.head())
 
 def prepare_info_for_model(df, first_n_elements=10000):
     clean_data = Cleaning_text()
