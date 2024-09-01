@@ -185,6 +185,12 @@ def search_documents(client, date_from="2024-07-09", date_to="2024-07-10", qty =
 #//////////////////////////////////////////////////////////////////////////////////////////
 # %%
 # SE DEFINEN DATASETS, REPOSITORIO, SENTIMENT ANALYZER, DAOs y NER
+
+# Se trabaja con 1500 noticias de cada dataset porque acelera el entrenamiento y al no tener
+# GPU, mi maquina tira timeout si trabajo con el dataset entero.
+
+# Probe usar OnlineTopicModeling y partial_fit, pero me fuerza a fijar al cantidad de topics
+# por cada iteracion y eso me pareció sub optimo eso para este ejercicio
 number_of_news_to_analyze=1500
 
 ds_list = [
